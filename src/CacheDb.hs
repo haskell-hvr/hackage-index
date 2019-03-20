@@ -10,7 +10,6 @@ module CacheDb (withCacheDb) where
 
 import           Utils
 
-import qualified Codec.Archive.Tar                            as Tar
 import qualified Codec.Archive.Tar.Entry                      as Tar
 import qualified Crypto.Hash.SHA256                           as SHA256
 import qualified Data.ByteString                              as BS
@@ -76,7 +75,7 @@ withCacheDb noSync act = do
             return (pkgid,revcnt)
 
       let go te ofs _ofs2 mdata = do
-            let fn = Tar.entryPath te
+            let fn = Tar.fromTarPathToPosixPath (Tar.entryTarPath te)
                 ts = PkgIdxTs $ fromIntegral $ Tar.entryTime te
                 owner = Tar.entryOwnership te
                 uid = Tar.ownerId owner
