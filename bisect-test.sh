@@ -5,7 +5,7 @@
 GOAL=libs
 XFLAGS="-vnormal+nowrap"
 
-case $# in 
+case $# in
   1) TS="$1" ;;
   2) TS="$2"; GOAL="$1" ;;
   *) echo "usage: $0 [BUILD-TARGET] INDEXSTATE"; exit 128;;
