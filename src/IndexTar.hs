@@ -7,8 +7,6 @@
 --
 module IndexTar where
 
-import           Utils
-
 import qualified Codec.Archive.Tar       as Tar
 import qualified Codec.Archive.Tar.Index as Tar
 import qualified Codec.Compression.GZip  as GZip
@@ -23,8 +21,10 @@ import qualified Data.Text.Encoding      as T
 import           System.Path.IO
 
 import           Cabal.Config
+import           Types
+import           Utils
 
-type SrcTarName   = BSS.ShortByteString -- with .tar.gz suffix
+type SrcTarName = BSS.ShortByteString -- with .tar.gz suffix
 
 getIndexTarFn :: T.Text -> IO (Path Absolute)
 getIndexTarFn label = do
@@ -89,9 +89,12 @@ unFlat fn0 = BSS.toShort $ mconcat [pn <> "/" <> pv <> "/" <> fn0']
 
 
 -- | convert a filename  @<name>-<ver>.tar.gz@ into a @(<name>,<ver>)@ pkg-id pair
-fn2pkgid :: SrcTarName -> (PkgN,PkgV)
-fn2pkgid fn0 = (PkgN (T.decodeUtf8 pn), PkgV (T.decodeUtf8 pv))
+fn2pkgid :: SrcTarName -> PkgId
+fn2pkgid fn0 = PkgId (mkPkgN pn') pv'
   where
+    Just pn' = tparse (T.decodeUtf8 pn)
+    Just pv' = tparse (T.decodeUtf8 pv)
+
     fn0' = BSS.fromShort fn0
 
     Just base = stripSuffixBS ".tar.gz" fn0'

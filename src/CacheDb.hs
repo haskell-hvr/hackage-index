@@ -8,8 +8,6 @@
 --
 module CacheDb (withCacheDb) where
 
-import           Utils
-
 import qualified Codec.Archive.Tar.Entry                      as Tar
 import qualified Crypto.Hash.SHA256                           as SHA256
 import qualified Data.ByteString                              as BS
@@ -17,6 +15,7 @@ import qualified Data.ByteString.Lazy                         as BSL
 import qualified Data.Text                                    as T
 import           Database.SQLite.Simple                       (Only (..))
 import qualified Database.SQLite.Simple                       as DB
+import qualified Distribution.Text                            as C
 import qualified Distribution.Types.GenericPackageDescription as C
 import qualified Distribution.Types.PackageDescription        as C
 import qualified System.FilePath                              as FP
@@ -29,6 +28,8 @@ import           HIX
 import           IndexTar
 import           PkgIdxTs
 import           System.Path.IO
+import           Types
+import           Utils
 
 type PkgIdKey = Int
 
@@ -76,14 +77,14 @@ withCacheDb noSync act = do
 
       let go te ofs _ofs2 mdata = do
             let fn = Tar.fromTarPathToPosixPath (Tar.entryTarPath te)
-                ts = PkgIdxTs $ fromIntegral $ Tar.entryTime te
+                ts = pkgIdxTsFromTarEpoch (Tar.entryTime te)
                 owner = Tar.entryOwnership te
                 uid = Tar.ownerId owner
             case FP.takeFileName fn of
               "package.json" -> do
                 let Just bs = mdata
                     Just (IndexShaEntry tarfn h1 _h2 tarsz) = decodePkgJsonFile (BSL.fromStrict bs)
-                    (n,v) = fn2pkgid tarfn
+                    PkgId n v = fn2pkgid tarfn
 
                 (pkgid,_) <- registerPkgId n v
 
@@ -100,8 +101,9 @@ withCacheDb noSync act = do
 
               fn' | FP.takeExtension fn' == ".cabal" -> do
                       let (n0,'/':v0) = break (=='/') $ FP.takeDirectory fn
-                          n = PkgN (T.pack n0)
-                          v = PkgV (T.pack v0)
+                          n = mkPkgN n0'
+                          Just v = C.simpleParse v0
+                          Just n0' = C.simpleParse n0
 
                       DB.execute conn "INSERT OR IGNORE INTO unames(uname_id,uname) VALUES (?,?)"
                                       (uid, T.pack (Tar.ownerName owner))
@@ -115,7 +117,7 @@ withCacheDb noSync act = do
 
                       mgpd <- case runParseGenericPackageDescription cabBs' of
                         Left (_mcv, perrs) -> do
-                          logWarn ("Failed to parse .cabal for " ++ show (fmtPkgIdR (PkgIdR n v revcnt),fmtPkgIdxTs ts) ++ " : " ++ show perrs)
+                          logWarn ("Failed to parse .cabal for " ++ show (disp (PkgIdR n v revcnt),disp ts) ++ " : " ++ show perrs)
 
                           pure Nothing
                         Right gpd -> pure (Just gpd)

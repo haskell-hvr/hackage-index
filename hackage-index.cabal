@@ -26,10 +26,11 @@ executable hit
     Cabal.Config
     Cabal.PD
     CacheDb
-    Utils
     HIX
     IndexTar
     PkgIdxTs
+    Types
+    Utils
 
   other-modules:
     Paths_hackage_index

@@ -1,14 +1,13 @@
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TupleSections     #-}
 
 -- |
 -- Copyright: Herbert Valerio Riedel
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
 module Main (main) where
-
-import           Utils
 
 import qualified Data.ByteString     as BS
 import qualified Data.List           as List
@@ -20,15 +19,14 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Version        as V
 import           Options.Applicative as OA
 import qualified Paths_hackage_index
-import           System.IO           (hSetBinaryMode)
-import           System.Path.IO
 
 import           Bisect
-import           Cabal.Config
+import           Cabal.PD
 import           CacheDb
 import           HIX
-import           IndexTar
 import           PkgIdxTs
+import           Types
+import           Utils
 
 ----------------------------------------------------------------------------
 -- CLI Interface
@@ -65,7 +63,7 @@ data Command
     | TsList       !TsRange
     | ProvidesMod  !VerSetStyle !ModuleN
     | ProvidesTool !VerSetStyle !ToolN
-    | RDependsLib  !VerSetStyle !PkgN
+    | RDependsLib  !VerSetStyle !PkgNOrId
     | BisectRun    !TsRef !TsRef !FilePath [String]
     | CatPD        !PkgIdR
 
@@ -140,19 +138,19 @@ optionsParserInfo
                                                              <*> OA.argument readm (metavar "MODULE-NAME")))
                                (progDesc "list packages potentially exposing/reexporting a given module"))
               , command "provides-tool" (info (helper <*> (ProvidesTool
-                                                             <$> vstyleOpt
-                                                             <*> OA.argument readm (metavar "TOOL-NAME")))
+                                                           <$> vstyleOpt
+                                                           <*> OA.argument readm (metavar "TOOL-NAME")))
                                (progDesc "list packages potentially providing a given tool/executable component"))
               , command "rdepends" (info (helper <*> (RDependsLib
-                                                       <$> vstyleOpt
-                                                       <*> OA.argument readm (metavar "PKG-NAME")))
+                                                      <$> vstyleOpt
+                                                      <*> OA.argument readm (metavar "PKG-NAME|PKGID")))
                                (progDesc "list packages potentially having a library-component dependency on given package-name"))
 
               , command "bisect-run" (info (helper <*> (BisectRun
-                                                       <$> OA.argument readm (metavar "TSREF1")
-                                                       <*> OA.argument readm (metavar "TSREF2")
-                                                       <*> OA.strArgument (metavar "CMD"))
-                                                       <*> many (OA.strArgument (metavar "CMDARG..."))
+                                                        <$> OA.argument readm (metavar "TSREF1")
+                                                        <*> OA.argument readm (metavar "TSREF2")
+                                                        <*> OA.strArgument (metavar "CMD"))
+                                                        <*> many (OA.strArgument (metavar "CMDARG..."))
                                            )
                                (progDesc "Perform binary search (in the style of 'git bisect run') between TSREF1 and TSREF2 to find index-state which introduced a change"
                                 <> footer "The exit code of CMD determines whether an index-state is considered as GOOD (0), BAD (1..124,126..127), or SKIP (125)."
@@ -202,12 +200,7 @@ mainWithOptions Options {..} = do
 
     doCatPD :: PkgIdR -> IO ()
     doCatPD pidr = do
-      (_, ofs, cabsha) <- withCacheDb optNoSync $ resolvePkgIdR pidr
-      ifn <- getIndexTarFn hackageRepoId
-      cabBs <- withFile ifn ReadMode $ \h -> do
-        hSetBinaryMode h True
-        readTarNormalFile1 h ofs
-      unless (sha256hash cabBs == cabsha) $ fail "internal integrity failure (.cabal SHA256 mismatch)"
+      cabBs <- withCacheDb optNoSync (idxGetPDRaw pidr)
       BS.putStr cabBs
 
     doLog :: LogOptions -> IO ()
@@ -235,7 +228,7 @@ mainWithOptions Options {..} = do
       forM_ logOptPkgN $ \x -> do
         res <- dbQuery "SELECT pname_id FROM pnames WHERE pname = ?" (Only x)
         case res of
-          []  -> fail ("package '" ++ (\(PkgN s) -> T.unpack s) x ++ "' not found")
+          []  -> fail ("package '" ++ disp x ++ "' not found")
           [y] -> dbExecute "INSERT INTO tmp_t2(pname_id) VALUES(?)" (y :: Only Int)
           (_:_:_) -> fail "impossible"
 
@@ -266,7 +259,7 @@ mainWithOptions Options {..} = do
                ]) (t1, t2, (if logOptLimit > 0 then logOptLimit else 0xffffffff {- ugly hack -}))
 
       -- mergesort
-      let go [] [] = []
+      let go [] [] = [] :: [Either (PkgIdxTs,PkgN,PkgV,PkgR,UserN,T.Text) (PkgIdxTs,PkgN)]
           go [] rs2 = map Right rs2
           go rs1 [] = map Left rs1
           go rs1@(r1@(ts1,_,_,_,_,_):rows1') rs2@(r2@(ts2,_):rows2')
@@ -276,17 +269,17 @@ mainWithOptions Options {..} = do
             = Left r1 : go rows1' rs2
 
       let fmtPkgId' pn pv prev
-            | logOptNoR0, prev == PkgR 0  = fmtPkgId  (PkgId  pn pv)
-            | otherwise                   = fmtPkgIdR (PkgIdR pn pv prev)
+            | logOptNoR0, prev == PkgR 0  = tdisp (PkgId  pn pv)
+            | otherwise                   = tdisp (PkgIdR pn pv prev)
 
       liftIO $ forM_ ((if logOptLimit > 0 then take logOptLimit else id) (go rows rows2)) $ \x -> do
         case x of
           Left (ts,pn,pv,prev,uname,syn)
-            | logOptShowSyn -> T.putStrLn (T.pack $ mconcat [ fmtPkgIdxTs ts, "\t", uname , "\t", fmtPkgId' pn pv prev, "\t", quoteSyn syn ])
-            | otherwise     -> T.putStrLn (T.pack $ mconcat [ fmtPkgIdxTs ts, "\t", uname , "\t", fmtPkgId' pn pv prev ])
+            | logOptShowSyn -> T.putStrLn (mconcat [ tdisp ts, "\t", tdisp uname , "\t", fmtPkgId' pn pv prev, "\t", quoteSyn syn ])
+            | otherwise     -> T.putStrLn (mconcat [ tdisp ts, "\t", tdisp uname , "\t", fmtPkgId' pn pv prev ])
           Right (ts,pn)
-            | logOptShowSyn -> T.putStrLn (T.pack $ mconcat [ fmtPkgIdxTs ts, "\t-\t", pn, "\t-" ])
-            | otherwise     -> T.putStrLn (T.pack $ mconcat [ fmtPkgIdxTs ts, "\t-\t", pn ])
+            | logOptShowSyn -> T.putStrLn (mconcat [ tdisp ts, "\t-\t", tdisp pn, "\t-" ])
+            | otherwise     -> T.putStrLn (mconcat [ tdisp ts, "\t-\t", tdisp pn ])
 
       pure ()
 
@@ -296,7 +289,7 @@ mainWithOptions Options {..} = do
     doTsParse tsref = withCacheDb optNoSync $ do
       resolveTsRef tsref >>= \case
         Nothing -> liftIO exitFailure
-        Just t' -> liftIO (putStrLn (fmtPkgIdxTs t'))
+        Just t' -> liftIO (T.putStrLn (tdisp t'))
 
     ----------------------------------------------------------------------------
 
@@ -305,10 +298,25 @@ mainWithOptions Options {..} = do
       t1 <- resolveTsRef tref1
       t2 <- resolveTsRef tref2
 
-      tslst <- fmap (\(Only x) -> x) <$> dbQuery "SELECT ts FROM revisions WHERE ts BETWEEN ? AND ? UNION SELECT ts FROM prefs WHERE ts BETWEEN ? AND ? ORDER BY ts DESC" (t1, t2, t1, t2)
-      liftIO $ forM_ tslst (T.putStrLn . T.pack . fmtPkgIdxTs)
+      tslst <- unOnlyLst <$> dbQuery "SELECT ts FROM revisions WHERE ts BETWEEN ? AND ? UNION SELECT ts FROM prefs WHERE ts BETWEEN ? AND ? ORDER BY ts DESC" (t1, t2, t1, t2)
+      liftIO $ forM_ (tslst :: [PkgIdxTs]) (T.putStrLn . tdisp)
 
     ----------------------------------------------------------------------------
+
+    doProvides :: VerSetStyle -> HIX [PkgId] -> IO ()
+    doProvides vstyle qry = withCacheDb optNoSync $ do
+      rows <- qry
+
+      let p2vs = Map.fromListWith mappend [ (k, Set.singleton (v :: PkgV)) | PkgId k v <- rows ]
+
+      forM_ (Map.toList p2vs) $ \(pname, pvers) -> do
+        -- /all/ versions of pname
+        pvers0 <- queryPkgVers pname
+        let allvers = Set.map (,True) pvers <> Set.map (,False) (pvers0 Set.\\ pvers)
+
+        liftIO $ do
+          forM_ (renderPackageVers vstyle pname allvers) T.putStrLn
+          T.putStrLn ""
 
     doProvidesMod vstyle mname = doProvides vstyle $
       dbQuery "SELECT s.pname,s.ver \
@@ -320,48 +328,39 @@ mainWithOptions Options {..} = do
               \  FROM pkgids_tools pm, tools m, pkgids_str s \
               \  WHERE tool = ? AND m.tool_id = pm.tool_id AND s.pkgid = pm.pkgid" (Only tname)
 
-    doRDependsLib vstyle pname = doProvides vstyle $
+    doRDependsLib vstyle (PkgN' pname) = doProvides vstyle $
       dbQuery "SELECT s.pname,s.ver \
               \  FROM pkgids_deps d JOIN pkgids_str s USING (pkgid) \
               \  WHERE d.pname_id = (SELECT pname_id FROM pnames WHERE pname = ?)" (Only pname)
 
-    doProvides vstyle qry = withCacheDb optNoSync $ do
-      rows <- qry
+    doRDependsLib vstyle (PkgId' pid) = withCacheDb optNoSync $ do
+      let PkgId pname0 _pv = pid
+      rows <- dbQuery "SELECT s.pname,s.ver \
+                      \  FROM pkgids_deps d JOIN pkgids_str s USING (pkgid) \
+                      \  WHERE d.pname_id = (SELECT pname_id FROM pnames WHERE pname = ?)" (Only pname0)
 
-      let p2vs = Map.fromListWith mappend [ (k, Set.singleton (v :: V)) | (k,v) <- rows ]
+      let p2vs = Map.fromListWith mappend [ (k, Set.singleton (v :: PkgV)) | (k,v) <- rows ]
+
+      -- liftIO $ forM_ (rows :: [(PkgN,PkgV,TarEntryOffset)]) $ \(pn,pv,ofs) -> print (disp pn, disp pv, show ofs)
 
       forM_ (Map.toList p2vs) $ \(pname, pvers) -> do
-        pvers00 <- map (\(Only x) -> (x::V)) <$> dbQuery "SELECT ver FROM pnames n, pkgids pi, vers v \
-                                                         \WHERE pname = ? AND n.pname_id = pi.pname_id AND pi.ver_id = v.ver_id \
-                                                         \" (Only pname)
+        -- /all/ versions of pname
+        pvers0 <- queryPkgVers pname
+        pvers0Ofs <- queryPkgVers' pname
 
-        let pvers0 = Set.fromList pvers00
-            npvers = (pvers0 Set.\\ pvers)
-            allvers = Set.map (\x -> (x,True)) pvers <> Set.map (\x -> (x,False)) npvers
-            gvers = List.groupBy (\x y -> snd x == snd y) $ Set.toList allvers
+        -- NB: pvers is-subset-of pvers0
+        pvers'' <- flip filterM (Set.toList pvers) $ \v -> do
+          let Just (ofs,cabsha) = Map.lookup v pvers0Ofs
+          rawpd <- idxGetBlob' ofs cabsha
+          let Right gpd = runParseGenericPackageDescription rawpd
+          pure $! canUseLibDep gpd pid
 
-        case vstyle of
-          VerSetCaret3Explicit -> liftIO $ do
-            forM_ gvers $ \vs@((_,isIn):_) -> do
-              T.putStrLn (pname <> (if isIn then " == { " else " /= { ") <> T.intercalate ", " (map tdisp (map fst vs)) <> " }")
+        let allvers = Set.map (,True) pvers' <> Set.map (,False) (pvers0 Set.\\ pvers')
+            pvers' = Set.fromList pvers''
 
-          VerSetCaret2 -> liftIO $ do
-            T.putStrLn (pname <> "  " <> T.intercalate " || "
-                        [ case mub of { Nothing -> "^>= " <> tdisp lb
-                                      ; Just ub -> "(^>= " <> tdisp lb <> " && < " <> tdisp (vstrip0s ub) <> ")"
-                                      }
-                        | (lb,mub) <- groupCaret allvers ])
-
-          VerSetCaret3 -> liftIO $ do
-            let points = groupCaret allvers
-                points1 = [ lb | (lb,Nothing) <- points ]
-
-            T.putStrLn (pname <> "  " <>
-                        T.intercalate " || " (
-                        (if null points1 then [] else ["^>= { " <> T.intercalate ", " (map tdisp points1) <> " }"])
-                         ++ [ "(^>= " <> tdisp lb <> " && < " <> tdisp (vstrip0s ub) <> ")" | (lb,Just ub) <- points ]))
-
-        liftIO $ putStrLn ""
+        liftIO $ do
+          forM_ (renderPackageVers vstyle pname allvers) T.putStrLn
+          T.putStrLn ""
 
     doBisectRun :: TsRef -> TsRef -> FilePath -> [FilePath] -> IO ()
     doBisectRun tref1 tref2 testcmd xargs = do
@@ -370,29 +369,29 @@ mainWithOptions Options {..} = do
         t1 <- resolveTsRef tref1
         t2 <- resolveTsRef tref2
 
-        fmap (\(Only x) -> x :: PkgIdxTs) <$> dbQuery "SELECT ts FROM revisions WHERE ts BETWEEN ? AND ? UNION SELECT ts FROM prefs WHERE ts BETWEEN ? AND ? ORDER BY ts ASC" (t1, t2, t1, t2)
+        unOnlyLst <$> dbQuery "SELECT ts FROM revisions WHERE ts BETWEEN ? AND ? UNION SELECT ts FROM prefs WHERE ts BETWEEN ? AND ? ORDER BY ts ASC" (t1, t2, t1, t2)
 
       let tsvec = VU.fromList tslist
 
-      logInfo (mconcat [ "Performing binary search between " <> fmtPkgIdxTs (VU.head tsvec) <> " and " <> fmtPkgIdxTs (VU.last tsvec) <> " (" <> show (VU.length tsvec) <> " index-states)" ])
+      logInfo (mconcat [ "Performing binary search between " <> disp (VU.head tsvec) <> " and " <> disp (VU.last tsvec) <> " (" <> show (VU.length tsvec) <> " index-states)" ])
 
       let go samples = do
             case bisectStep samples of
               BisectNeedTest mi -> do
                 let mits = tsvec VU.! mi
                 rc <- runTestCmd testcmd xargs mits
-                logInfo (fmtPkgIdxTs mits <> " -> " <> showTestCmdRes rc)
+                logInfo (disp mits <> " -> " <> showTestCmdRes rc)
                 go (Map.insert mi rc samples)
               BisectDone li ui -> do
-                logInfo ("bisection completed; the change was introduced in index-state " <> fmtPkgIdxTs (tsvec VU.! ui)
-                          <> (" (log " <> fmtPkgIdxTs (tsvec VU.! li) <> ".." <> fmtPkgIdxTs (tsvec VU.! ui) <> " )"))
+                logInfo ("bisection completed; the change was introduced in index-state " <> disp (tsvec VU.! ui)
+                          <> (" (log " <> disp (tsvec VU.! li) <> ".." <> disp (tsvec VU.! ui) <> " )"))
 
                 -- print collected evidence
                 T.putStrLn ""
                 forM_ (Map.toList samples) $ \(mi, st) ->
-                  T.putStrLn $ T.pack $ mconcat [ show mi, "\t", fmtPkgIdxTs (tsvec VU.! mi), "\t"
-                                                , showTestCmdRes st
-                                                , if ui == mi then "\t<<<" else if li == mi then "\t>>>" else "" ]
+                  T.putStrLn $ mconcat [ tshow mi, "\t", tdisp (tsvec VU.! mi), "\t"
+                                       , T.pack (showTestCmdRes st)
+                                       , if ui == mi then "\t<<<" else if li == mi then "\t>>>" else "" ]
                 T.putStrLn ""
 
       -- start the bisection
@@ -438,20 +437,80 @@ resolvePkgIdR (PkgIdR pn pv pr) = do
 
     revdata <- do res <- dbQuery "SELECT ts,ofs,cabsha FROM revisions WHERE pkgid = ? and rev = ?" (pid_key :: Int, pr)
                   case res of
-                   [] -> fail ("release '" ++ pnstr ++ "-" ++ pvstr ++ "' has no revision " ++ prstr)
+                   [] -> fail ("release '" ++ pnstr ++ "-" ++ pvstr ++ "' has no revision " ++ disp pr)
                    [k] -> pure k
                    (_:_:_) -> fail "internal inconsistency"
 
     return revdata
   where
-    pnstr = (\(PkgN s) -> T.unpack s) pn
-    pvstr = (\(PkgV s) -> T.unpack s) pv
-    prstr = "r" ++ show ((\(PkgR n) -> n) pr)
+    pnstr = disp pn
+    pvstr = disp pv
+
+
+idxGetPDRaw :: PkgIdR -> HIX ByteString
+idxGetPDRaw pidr = do
+  (_, ofs, cabsha) <- resolvePkgIdR pidr
+  idxGetBlob' ofs cabsha
+
+idxGetBlob' :: TarEntryOffset -> SHA256Val -> HIX ByteString
+idxGetBlob' ofs hash = do
+  raw <- idxGetBlob ofs
+  unless (sha256hash raw == hash) $ fail "internal integrity failure (index blob SHA256 mismatch)"
+  pure raw
+
+-- dbLookupRev :: PkgId -> PkgIdR
+-- dbLookupRev (PkgId pn pv) = do
 
 -- | Wraps in @"@s, normalizes whitespaces, and uses dup-escaping for @"@s
-quoteSyn :: String -> String
-quoteSyn s0 = '"' : go (unwords (words s0))
+quoteSyn :: Text -> T.Text
+quoteSyn s0 = T.pack ('"' : go (unwords (words (T.unpack s0))))
   where
     go []       = '"':[]
     go ('"':cs) = '"':'"':go cs
     go (c:cs)   = c:go cs
+
+
+
+renderPackageVers :: VerSetStyle -> PkgN -> Set (PkgV, Bool) -> [Text]
+renderPackageVers vstyle pname allvers = do
+    case vstyle of
+      VerSetCaret3Explicit -> do
+        -- group consecutive in/out domains of versions
+        let gvers = List.groupBy (\x y -> snd x == snd y) $ Set.toList allvers
+        [ tdisp pname <> (if isIn then " == { " else " /= { ") <> T.intercalate ", " (map tdisp (map fst vs)) <> " }" | vs@((_,isIn):_) <- gvers ]
+
+      VerSetCaret2
+        | gvers@(_:_) <- groupCaret allvers
+        -> pure $ tdisp pname <> "  " <> T.intercalate " || "
+                  [ case mub of { Nothing -> "^>= " <> tdisp lb
+                                ; Just ub -> "(^>= " <> tdisp lb <> " && < " <> tdisp (vstrip0s ub) <> ")"
+                                }
+                  | (lb,mub) <- gvers ]
+        | otherwise -> pure $ tdisp pname <> "  -none"
+
+      VerSetCaret3 -> do
+        let points = groupCaret allvers
+            points1 = [ lb | (lb,Nothing) <- points ]
+
+        pure $ tdisp pname <> "  " <> T.intercalate " || " (
+          (if null points1 then [] else ["^>= { " <> T.intercalate ", " (map tdisp points1) <> " }"])
+           ++ [ "(^>= " <> tdisp lb <> " && < " <> tdisp (vstrip0s ub) <> ")" | (lb,Just ub) <- points ]
+          )
+
+
+queryPkgVers :: PkgN -> HIX (Set PkgV)
+queryPkgVers pname = do
+  Set.fromList . unOnlyLst <$>
+    dbQuery "SELECT ver FROM pnames n, pkgids pi, vers v \
+            \WHERE pname = ? AND n.pname_id = pi.pname_id AND pi.ver_id = v.ver_id \
+            \" (Only pname)
+
+-- | get release versions of package name w/ tar-offsets to latest revisions
+queryPkgVers' :: PkgN -> HIX (Map PkgV (TarEntryOffset,SHA256Val))
+queryPkgVers' pname = -- TODO: queryPkgVersAtIdxState
+  mapFromListDistinct . map (\(v,o,h) -> (v,(o,h))) <$>
+    dbQuery "SELECT v.ver,r.ofs,r.cabsha FROM pkgids pi, vers v, revisions r \
+            \WHERE pi.pname_id = (SELECT pname_id FROM pnames WHERE pname = ?) \
+            \  AND pi.ver_id = v.ver_id \
+            \  AND pi.pkgid = r.pkgid AND pi.revcnt = r.rev+1 \
+            \" (Only pname)

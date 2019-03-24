@@ -30,7 +30,7 @@ showTestCmdRes = \case
 -- extra arguments on the commandline
 runTestCmd :: FilePath -> [String] -> PkgIdxTs -> IO TestCmdRes
 runTestCmd cmd xargs ts = do
-  ec <- rawSystem cmd (xargs ++ [fmtPkgIdxTs ts])
+  ec <- rawSystem cmd (xargs ++ [disp ts])
 
   case ec of
     ExitSuccess -> pure TestCmdGood

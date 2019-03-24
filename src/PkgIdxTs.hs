@@ -7,8 +7,15 @@
 -- Copyright: Herbert Valerio Riedel
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
-module PkgIdxTs where
+module PkgIdxTs
+    ( PkgIdxTs
+    , pkgIdxTsFromTarEpoch
 
+    , TsRef(..)
+    , TsRange(..)
+    ) where
+
+import qualified Codec.Archive.Tar.Entry          as Tar
 import qualified Data.Text                        as T
 import           Data.Time.Clock.POSIX            (POSIXTime,
                                                    posixSecondsToUTCTime,
@@ -20,15 +27,20 @@ import qualified Database.SQLite.Simple.FromField as DB
 import qualified Database.SQLite.Simple.ToField   as DB
 import           Text.Parsec                      as P
 
+import           Types
 import           Utils
 
 newtype PkgIdxTs = PkgIdxTs Int
                  deriving (Eq,Ord,Show,DB.FromField,DB.ToField)
 
+
+pkgIdxTsFromTarEpoch :: Tar.EpochTime -> PkgIdxTs
+pkgIdxTsFromTarEpoch = PkgIdxTs . fromIntegral
+
 derivingUnbox "PkgIdxTs" [t| PkgIdxTs -> Int |] [| \(PkgIdxTs i) -> i |] [| PkgIdxTs |]
 
-fmtPkgIdxTs :: PkgIdxTs -> String
-fmtPkgIdxTs (PkgIdxTs t) = formatTime defaultTimeLocale "%Y-%m-%dT%TZ" (posixSecondsToUTCTime (fromIntegral t :: POSIXTime))
+instance TPretty PkgIdxTs where
+  disp (PkgIdxTs t) = formatTime defaultTimeLocale "%Y-%m-%dT%TZ" (posixSecondsToUTCTime (fromIntegral t :: POSIXTime))
 
 pkgIdxTsParser :: Parsec T.Text () PkgIdxTs
 pkgIdxTsParser = try $ do
@@ -53,6 +65,7 @@ pkgIdxTsParser = try $ do
     Nothing -> fail "invalid ISO8601 format"
     Just t  -> return $ PkgIdxTs $ ceiling (realToFrac (utcTimeToPOSIXSeconds t) :: Double)
 
+----------------------------------------------------------------------------
 
 data TsRef = TsRef0
            | TsRefTs !PkgIdxTs
@@ -65,6 +78,11 @@ tsRefParser = do
          , TsRefTs <$> pkgIdxTsParser
          , TsRefPkgId <$> pkgIdRParser
          ]
+
+instance Reader TsRef where
+  readm = parsecReader "TSREF" tsRefParser
+
+----------------------------------------------------------------------------
 
 data TsRange = TsRange !TsRef !TsRef
 
@@ -83,10 +101,6 @@ tsRangeParser = do
   pure $ case mr2 of
     Nothing -> TsRange TsRef0 r1
     Just r2 -> TsRange r1 r2
-
-
-instance Reader TsRef where
-  readm = parsecReader "TSREF" tsRefParser
 
 instance Reader TsRange where
   readm = parsecReader "TSRANGE" tsRangeParser

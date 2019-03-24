@@ -6,13 +6,20 @@
 -- Copyright:  Herbert Valerio Riedel
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
-module HIX where
+module HIX
+    ( module HIX
+    , TarEntryOffset
+    )
+
+where
+
+import           Codec.Archive.Tar.Index (TarEntryOffset)
+import           Control.Monad.Reader
+import qualified Database.SQLite.Simple  as DB
+import           IndexTar                (readTarNormalFile1)
+import           System.Path.IO
 
 import           Utils
-
-import           Control.Monad.Reader
-import qualified Database.SQLite.Simple as DB
-import           System.Path.IO
 
 -- | Monad representing a Hackage package index query context
 newtype HIX a = HIX { unHIX :: ReaderT (DB.Connection,Handle) IO a }
@@ -20,6 +27,11 @@ newtype HIX a = HIX { unHIX :: ReaderT (DB.Connection,Handle) IO a }
 
 runHIX :: HIX a -> (DB.Connection,Handle) -> IO a
 runHIX (HIX act) r = runReaderT act r
+
+idxGetBlob :: TarEntryOffset -> HIX ByteString
+idxGetBlob ofs = HIX $ do
+  h <- asks snd
+  liftIO (readTarNormalFile1 h ofs)
 
 dbQuery_ :: DB.FromRow r => DB.Query -> HIX [r]
 dbQuery_ dbq = HIX $ do
@@ -68,3 +80,6 @@ dbWithExclusiveTx :: HIX a -> HIX a
 dbWithExclusiveTx (HIX act) = HIX $ do
     r@(conn,_) <- ask
     liftIO (DB.withExclusiveTransaction conn (runReaderT act r))
+
+unOnlyLst :: [Only x] -> [x]
+unOnlyLst = coerce
