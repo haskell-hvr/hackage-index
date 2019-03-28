@@ -90,7 +90,7 @@ optionsParserInfo
             <> header "hit - Hackage index tool"
             <> footer "\
               \ Each command has a sub-`--help` text. \
-              \ This tool reads the `~/.cabal/config` configuration file and honors the `CABAL_CONFIG` environemnt variable.\
+              \ This tool reads the `~/.cabal/config` configuration file and honors the `CABAL_CONFIG` environment variable.\
               \ TSREF := [ '@' | ISOTS | PKGID-REV ], TSRANGE := TSREF [ '..' [ TSREF ] ]. ISOTS := e.g. '2014-11-22T12:39:07Z'.\
               \ PKGID-REV := e.g. 'lens-1.2.3-r4'. \
               \")
