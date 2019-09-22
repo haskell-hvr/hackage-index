@@ -81,10 +81,7 @@ parsecReader lbl p = OA.eitherReader (\s -> first (prerr s) . parse (p <* (eof <
 
 -- | lift binary combining operation to 'Maybe's
 onMaybes :: (a -> a -> a) -> Maybe a -> Maybe a -> Maybe a
-onMaybes _ Nothing Nothing   = Nothing
-onMaybes f (Just x) (Just y) = Just (f x y)
-onMaybes _ (Just x) Nothing  = Just x
-onMaybes _ Nothing (Just y)  = Just y
+onMaybes f x y = OA.liftA2 f x y OA.<|> x OA.<|> y
 
 groupOn :: Ord k => (x->k) -> [x] -> [([x],k)]
 groupOn g = map f . List.groupBy (\x y -> snd x == snd y) . map (\x -> (x, g x))
