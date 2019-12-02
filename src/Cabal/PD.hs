@@ -26,10 +26,7 @@ import           Distribution.ModuleName                      as C
 import           Distribution.Package                         as C
 import           Distribution.PackageDescription              as C
 import           Distribution.PackageDescription.Parsec       as C
-import           Distribution.Parsec.Class                    as C
-import           Distribution.Parsec.Common                   as C
-import           Distribution.Parsec.Field                    as C
-import           Distribution.Parsec.Parser                   as C
+import           Distribution.Parsec                          as C
 import           Distribution.Pretty                          as C
 import qualified Distribution.Text                            as C
 import qualified Distribution.Types.CondTree                  as C

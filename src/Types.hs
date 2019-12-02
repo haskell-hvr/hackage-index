@@ -43,7 +43,8 @@ import qualified Database.SQLite.Simple.FromRow   as DB
 import qualified Database.SQLite.Simple.ToField   as DB
 import           Distribution.ModuleName          as C
 import           Distribution.Package             as C
-import qualified Distribution.Text                as C
+import qualified Distribution.Parsec              as C
+import qualified Distribution.Pretty              as C
 import qualified Distribution.Version             as C
 import qualified Options.Applicative              as OA
 import           System.Path.IO
@@ -235,10 +236,13 @@ modNameParser = ModuleN . T.pack <$> s1
 
 ----------------------------------------------------------------------------
 
-newtype PkgV = PkgV C.Version deriving (Eq,Ord,NFData,C.Text)
+newtype PkgV = PkgV C.Version deriving (Eq,Ord,NFData,C.Pretty)
+
+instance C.Parsec PkgV where
+  parsec = PkgV <$> C.parsec
 
 instance TPretty PkgV where
-  disp = display
+  disp = C.prettyShow
 
 instance DB.ToField PkgV where
   toField = DB.toField . tdisp

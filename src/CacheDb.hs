@@ -8,6 +8,7 @@
 --
 module CacheDb (withCacheDb) where
 
+import           Cabal.Config                                 (hackageHaskellOrg)
 import qualified Codec.Archive.Tar.Entry                      as Tar
 import qualified Crypto.Hash.SHA256                           as SHA256
 import qualified Data.ByteString                              as BS
@@ -22,7 +23,6 @@ import qualified System.FilePath                              as FP
 import           System.IO                                    (hSetBinaryMode,
                                                                hTell)
 
-import           Cabal.Config
 import           Cabal.PD
 import           HIX
 import           IndexTar
@@ -32,6 +32,9 @@ import           Types
 import           Utils
 
 type PkgIdKey = Int
+
+hackageRepoId :: T.Text
+hackageRepoId = T.pack hackageHaskellOrg
 
 withCacheDb :: Bool -> HIX a -> IO a
 withCacheDb noSync act = do

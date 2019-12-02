@@ -11,7 +11,7 @@ module Utils
     ( module Utils
     , module X
     , T.Text
-    , C.display
+    , C.prettyShow
     , ByteString
     , ShortByteString
     , Data.Semigroup.Semigroup((<>))
@@ -47,7 +47,8 @@ import qualified Data.Text.IO           as T
 import           Data.Traversable
 import           Data.Word              as X
 import           Database.SQLite.Simple (Only (..))
-import qualified Distribution.Text      as C
+import qualified Distribution.Parsec    as C
+import qualified Distribution.Pretty    as C
 import           Numeric.Natural        (Natural)
 import qualified Options.Applicative    as OA
 import qualified System.Directory       as D
@@ -96,8 +97,8 @@ groupOnSnd =  map f . List.groupBy (\x y -> snd x == snd y)
 tshow :: Show a => a -> T.Text
 tshow x = T.pack (show x)
 
-tparse :: C.Text a => T.Text -> Maybe a
-tparse = C.simpleParse . T.unpack
+tparse :: C.Parsec a => T.Text -> Maybe a
+tparse = C.simpleParsec . T.unpack
 
 class TPretty a where
   {-# MINIMAL tdisp | disp #-}
@@ -107,8 +108,8 @@ class TPretty a where
   disp :: a -> String
   disp = T.unpack . tdisp
 
-tdisp' :: C.Text a => a -> T.Text
-tdisp' = T.pack . C.display
+tdisp' :: C.Pretty a => a -> T.Text
+tdisp' = T.pack . C.prettyShow
 
 getXdgCacheDirectory :: IO (Path Absolute)
 getXdgCacheDirectory = makeAbsolute . fromFilePath =<< D.getXdgDirectory D.XdgCache ""
