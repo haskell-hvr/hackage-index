@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE CPP                        #-}
 
 -- |
 -- Copyright:  Herbert Valerio Riedel
@@ -15,6 +16,10 @@ where
 
 import           Codec.Archive.Tar.Index (TarEntryOffset)
 import           Control.Monad.Reader
+
+#if __GLASGOW_HASKELL__ < 808
+import           Control.Monad.Fail (MonadFail)
+#endif
 import qualified Database.SQLite.Simple  as DB
 import           IndexTar                (readTarNormalFile1)
 import           System.Path.IO
@@ -23,7 +28,7 @@ import           Utils
 
 -- | Monad representing a Hackage package index query context
 newtype HIX a = HIX { unHIX :: ReaderT (DB.Connection,Handle) IO a }
-              deriving (Functor,Applicative,Monad,MonadIO)
+              deriving (Functor,Applicative,Monad,MonadIO,MonadFail)
 
 runHIX :: HIX a -> (DB.Connection,Handle) -> IO a
 runHIX (HIX act) r = runReaderT act r

@@ -38,8 +38,12 @@ readConfigFile = do
 
     let repoCache = fromAbsoluteFilePath (I.runIdentity (C.cfgRemoteRepoCache cfg))
 
+    let repoSecure repo name
+          | name == "hackage.haskell.org" = True
+          | otherwise = C.repoSecure repo
+
     return $ CabalConfig
-        [ (T.pack repoName, (C.repoSecure repo, p))
+        [ (T.pack repoName, (repoSecure repo repoName, p))
         | (repoName, repo) <- M.toList (C.cfgRepositories cfg)
         , let p = repoCache </> fromUnrootedFilePath repoName
         ]
