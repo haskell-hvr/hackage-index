@@ -8,21 +8,21 @@
 --
 module CacheDb (withCacheDb) where
 
+import           Cabal.Config                                 (hackageHaskellOrg)
 import qualified Codec.Archive.Tar.Entry                      as Tar
 import qualified Crypto.Hash.SHA256                           as SHA256
 import qualified Data.ByteString                              as BS
 import qualified Data.ByteString.Lazy                         as BSL
 import qualified Data.Text                                    as T
-import           Database.SQLite.Simple                       (Only (..))
 import qualified Database.SQLite.Simple                       as DB
 import qualified Distribution.Text                            as C
 import qualified Distribution.Types.GenericPackageDescription as C
 import qualified Distribution.Types.PackageDescription        as C
+import qualified Distribution.Utils.ShortText                 as C
 import qualified System.FilePath                              as FP
 import           System.IO                                    (hSetBinaryMode,
                                                                hTell)
 
-import           Cabal.Config
 import           Cabal.PD
 import           HIX
 import           IndexTar
@@ -32,6 +32,9 @@ import           Types
 import           Utils
 
 type PkgIdKey = Int
+
+hackageRepoId :: T.Text
+hackageRepoId = T.pack hackageHaskellOrg
 
 withCacheDb :: Bool -> HIX a -> IO a
 withCacheDb noSync act = do
@@ -124,7 +127,7 @@ withCacheDb noSync act = do
 
                       let Just gpd = mgpd
                           mods = getApiModules gpd
-                          syn = T.pack $ C.synopsis $ C.packageDescription gpd
+                          syn = T.pack $ C.fromShortText $ C.synopsis $ C.packageDescription gpd
                           tools = getTools gpd
 
                           libdeps = getLibDeps gpd

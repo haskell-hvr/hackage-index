@@ -1,14 +1,13 @@
-%YAML 1.1
-# Copyright (C) 2019  Herbert Valerio Riedel
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
----
-name: Haskell CI
+name: Hackage Index CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types:
+      - opened
+      - synchronize
 
 jobs:
   "Job":
@@ -16,145 +15,61 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - 'macOS-10.14'
-          - 'ubuntu-18.04'
+          - 'macOS-latest'
+          - 'ubuntu-latest'
           - 'windows-latest'
 
         ghc:
+          - '8.10.2'
+          - '8.8.4'
           - '8.6.5'
-          - '8.4.4'
-          - '8.2.2'
-          - '8.0.2'
-          - '7.10.3'
+    env:
+      CONFIG: "--enable-tests --enable-benchmarks"
 
     runs-on: ${{ matrix.os }}
 
-    env:
-      GHCVER: ${{ matrix.ghc }}
-
     steps:
-      - uses: actions/checkout@v1
+    - uses: actions/checkout@v2
+    - uses: haskell/actions/setup@v1
+      id: setup-haskell-cabal
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: '3.2'
+        enable-stack: true
 
-      - name: 'Setup'
-        id: hs-setup
-        shell: bash
-        env:
-          RUNNEROS: ${{ runner.os }}
+    - name: 'Setup'
+      shell: bash
+      run: |
+        cabal --version
+        ghc --version
+        cabal user-config update -a "http-transport: plain-http" -v3
+        cabal user-config diff
 
-        run: |
-          case "$RUNNEROS" in
-            Linux)
-              if [ ! -d "/opt/ghc/$GHCVER/bin" ]; then
-                sudo apt-get install -y ghc-$GHCVER
-              fi
 
-              export PATH=/opt/cabal/3.0/bin:/opt/ghc/$GHCVER/bin:$PATH
+    - run: cabal v2-update
+    - run: cabal v2-freeze $CONFIG
 
-              echo "::set-output name=store-dir::${HOME}/.cabal/store"
-              echo "::add-path::/opt/cabal/3.0/bin"
-              echo "::add-path::/opt/ghc/$GHCVER/bin"
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ${{ steps.setup-haskell-cabal.outputs.cabal-store }}
+          dist-newstyle
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.freeze') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-
+    - name: Build dependencies
+      run: cabal v2-build --only-dependencies $CONFIG
+    - name: Build
+      run: cabal v2-build $CONFIG
+    - name: Test
+      run: cabal v2-test $CONFIG
+    - name: Haddock
+      run: cabal v2-haddock $CONFIG --haddock-executables
 
-              ;;
-
-            ################################################################################
-            macOS)
-
-              sudo mkdir -p /opt/cabal/3.0/bin
-              curl https://downloads.haskell.org/cabal/cabal-install-3.0.0.0/cabal-install-3.0.0.0-x86_64-apple-darwin17.7.0.tar.xz > /tmp/cabal.tar.xz
-              pushd /opt/cabal/3.0/bin
-              sudo tar -xvJf /tmp/cabal.tar.xz
-              popd
-              ls -l /tmp/cabal.tar.xz
-              rm /tmp/cabal.tar.xz
-
-              sudo mkdir -p /opt/ghc
-              sudo chown runner:wheel /opt/ghc
-
-              case $GHCVER in
-                7\.10\.3) GHCURL=https://downloads.haskell.org/ghc/7.10.3/ghc-7.10.3b-x86_64-apple-darwin.tar.xz ;;
-                8\.0\.2) GHCURL=https://downloads.haskell.org/~ghc/8.0.2/ghc-8.0.2-x86_64-apple-darwin.tar.xz ;;
-                8\.2\.2) GHCURL=https://downloads.haskell.org/~ghc/8.2.2/ghc-8.2.2-x86_64-apple-darwin.tar.xz ;;
-                8\.4\.4) GHCURL=https://downloads.haskell.org/~ghc/8.4.4/ghc-8.4.4-x86_64-apple-darwin.tar.xz ;;
-                8\.6\.5) GHCURL=https://downloads.haskell.org/~ghc/8.6.5/ghc-8.6.5-x86_64-apple-darwin.tar.xz ;;
-                *) exit 2 ;;
-              esac
-
-              curl "$GHCURL" > /tmp/ghc.tar.xz
-              ls -l /tmp/ghc.tar.xz
-              mkdir /tmp/ghcinst
-              pushd /tmp/ghcinst
-              tar -xJf /tmp/ghc.tar.xz
-              rm /tmp/ghc.tar.xz
-              ls -l
-              cd ghc-*/
-              ./configure --prefix=/opt/ghc/$GHCVER
-              make install
-              popd
-              rm -rf /tmp/ghcinst
-
-              export PATH=/opt/cabal/3.0/bin:/opt/ghc/$GHCVER/bin:$PATH
-
-              echo "::set-output name=store-dir::${HOME}/.cabal/store"
-              echo "::add-path::/opt/cabal/3.0/bin"
-              echo "::add-path::/opt/ghc/$GHCVER/bin"
-
-              ;;
-
-            ################################################################################
-            Windows)
-
-              mkdir -p /c/tools/msys64/mingw64/lib
-
-              export CABAL_DIR="C:\\CABAL"
-              choco install -r -y cabal --version 3.0.0.0
-              cabal user-config diff
-              cabal user-config update -a "store-dir: C:\SR" -v3
-
-              # some versions need a fixup to grab the latest chocolatey revision
-              case $GHCVER in
-                8\.0\.2) CGVER="8.0.2.2" ;;
-                7\.10\.3) CGVER="7.10.3.2" ;;
-                7\.8\.4) CGVER="7.8.4.1" ;;
-                7\.6\.3) CGVER="7.6.3.1" ;;
-                *) CGVER="$GHCVER";;
-              esac
-
-              choco install -r -y ghc --version=${CGVER}
-              export PATH="/c/ProgramData/chocolatey/lib/ghc/tools/ghc-${GHCVER}/bin:${PATH}"
-
-              echo "::set-env name=CABAL_DIR::C:\\CABAL"
-              echo "::set-output name=store-dir::C:\\SR"
-              echo "::add-path::C:\\ProgramData\\chocolatey\\lib\\ghc\\tools\\ghc-${GHCVER}\\bin"
-
-              ;;
-
-            ################################################################################
-          esac
-
-          cabal --version
-          ghc --version
-          cabal user-config update -a "http-transport: plain-http" -v3
-          cabal user-config diff
-
-      - name: "Update"
-        shell: bash
-        run: |
-          cabal --version
-          ghc --version
-          cabal update -v
-
-      - name: 'Cache Nix-Style Cabal Store'
-        uses: actions/cache@v1
-        with:
-          path: ${{ steps.hs-setup.outputs.store-dir }}
-          key: ${{ runner.os }}-ghc-${{ matrix.ghc }}-store-3.0
-
-      - name: "Build"
-        shell: bash
-        run: |
-          cabal --version
-          ghc   --version
-
-          cabal v2-build -w ghc-${GHCVER} all
-
-...
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ludeeus/action-shellcheck@master
+      with:
+        ignore: tests

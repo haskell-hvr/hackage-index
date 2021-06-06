@@ -20,16 +20,14 @@ import           Utils
 
 import qualified Data.ByteString                              as BS
 import qualified Data.Map.Strict                              as Map
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Set                                     as Set
 import qualified Data.Text                                    as T
 import           Distribution.ModuleName                      as C
 import           Distribution.Package                         as C
 import           Distribution.PackageDescription              as C
 import           Distribution.PackageDescription.Parsec       as C
-import           Distribution.Parsec.Class                    as C
-import           Distribution.Parsec.Common                   as C
-import           Distribution.Parsec.Field                    as C
-import           Distribution.Parsec.Parser                   as C
+import           Distribution.Parsec                          as C
 import           Distribution.Pretty                          as C
 import qualified Distribution.Text                            as C
 import qualified Distribution.Types.CondTree                  as C
@@ -40,7 +38,7 @@ import           Distribution.Verbosity                       as C
 import           Distribution.Version                         as C
 
 -- | Convenience wrapper
-runParseGenericPackageDescription :: ByteString -> Either (Maybe Version, [PError]) GenericPackageDescription
+runParseGenericPackageDescription :: ByteString -> Either (Maybe Version, NE.NonEmpty PError) GenericPackageDescription
 runParseGenericPackageDescription = snd . runParseResult . parseGenericPackageDescription
 
 -- | Get @exposed-modules@ and @reexported-modules@
@@ -261,7 +259,7 @@ pruneManFlagsGPD gpd
     evalCV (C.OS _)     = Nothing
     evalCV (C.Arch _)   = Nothing
     evalCV (C.Impl _ _) = Nothing
-    evalCV (C.Flag fn)  = Map.lookup fn fm
+    evalCV (C.PackageFlag fn)  = Map.lookup fn fm
 
     fm :: Map.Map C.FlagName Bool
     fm = Map.fromList [ (C.flagName f, C.flagDefault f) | f <- C.genPackageFlags gpd , C.flagManual f ]

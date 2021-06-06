@@ -26,13 +26,9 @@ module Types
 import           Utils
 
 import qualified Codec.Archive.Tar.Index          as Tar
-import qualified Codec.Base16                     as B16
+import qualified Data.ByteString.Base16           as B16
 import qualified Crypto.Hash.SHA256               as SHA256
-import           Data.ByteString                  (ByteString)
 import qualified Data.ByteString                  as BS
-import           Data.ByteString.Short            (ShortByteString, fromShort,
-                                                   toShort)
-import qualified Data.ByteString.Short            as SBS
 import           Data.Char                        (isDigit)
 import qualified Data.List                        as List
 import qualified Data.Set                         as Set
@@ -43,7 +39,8 @@ import qualified Database.SQLite.Simple.FromRow   as DB
 import qualified Database.SQLite.Simple.ToField   as DB
 import           Distribution.ModuleName          as C
 import           Distribution.Package             as C
-import qualified Distribution.Text                as C
+import qualified Distribution.Parsec              as C
+import qualified Distribution.Pretty              as C
 import qualified Distribution.Version             as C
 import qualified Options.Applicative              as OA
 import           System.Path.IO
@@ -87,18 +84,18 @@ instance TPretty PkgR where
 
 ----------------------------------------------------------------------------
 
-newtype SHA256Val = SHA256Val ShortByteString
+newtype SHA256Val = SHA256Val ByteString
                   deriving (Eq,Ord,NFData)
 
 instance DB.ToField SHA256Val where
-  toField (SHA256Val x) = DB.toField (fromShort x)
+  toField (SHA256Val x) = DB.toField x
 
 instance DB.FromField SHA256Val where
   fromField fld = do
     x <- DB.fromField fld
     unless (BS.length x == 32) $ do
       fail "fromField: invalid SHA256Val in DB"
-    return $! (SHA256Val (toShort x))
+    return $! (SHA256Val x)
 
 instance IsString SHA256Val where
     fromString = fromMaybe (error "invalid SHA256Val string-literal") . sha256unhex . fromString
@@ -107,24 +104,24 @@ instance Show SHA256Val where
     show = ("sha256:" ++) . show . sha256hex
 
 sha256hash :: ByteString -> SHA256Val
-sha256hash = SHA256Val . toShort . SHA256.hash
+sha256hash = SHA256Val . SHA256.hash
 
 sha256hex :: SHA256Val -> ByteString
-sha256hex (SHA256Val x) = B16.encode (fromShort x)
+sha256hex (SHA256Val x) = B16.encode x
 
 sha256unhex :: ByteString -> Maybe SHA256Val
 sha256unhex x = case B16.decode x of
-    Right d | SBS.length d == 32
+    Right d | BS.length d == 32
                 -> Just (SHA256Val d)
     _           -> Nothing
 
 -- Special reserved 'SHA256Val'
 sha256zero :: SHA256Val
-sha256zero = SHA256Val $ toShort $ BS.replicate 32 0
+sha256zero = SHA256Val $ BS.replicate 32 0
 
 ----------------------------------------------------------------------------
 
-newtype MD5Val    = MD5Val    ShortByteString
+newtype MD5Val    = MD5Val    ByteString
                   deriving (Eq,Ord,NFData)
 
 instance IsString MD5Val where
@@ -137,20 +134,20 @@ instance Show MD5Val where
 -- md5hash = MD5Val . toShort . MD5.hash
 
 md5hex :: MD5Val -> ByteString
-md5hex (MD5Val x) = B16.encode (fromShort x)
+md5hex (MD5Val x) = B16.encode x
 
 md5unhex :: ByteString -> Maybe MD5Val
 md5unhex x = case B16.decode x of
-    Right d | SBS.length d == 16
+    Right d | BS.length d == 16
                 -> Just (MD5Val d)
     _           -> Nothing
 
 -- Special reserved 'SHA256Val'
 md5zero :: MD5Val
-md5zero = MD5Val $ toShort $ BS.replicate 16 0
+md5zero = MD5Val $ BS.replicate 16 0
 
 sha256finalize :: SHA256.Ctx -> SHA256Val
-sha256finalize = SHA256Val . toShort . SHA256.finalize
+sha256finalize = SHA256Val . SHA256.finalize
 
 hSha256Update :: Handle -> Tar.TarEntryOffset -> Tar.TarEntryOffset -> SHA256.Ctx -> IO SHA256.Ctx
 hSha256Update h ofs1 ofs2 ctx00 =
@@ -235,10 +232,13 @@ modNameParser = ModuleN . T.pack <$> s1
 
 ----------------------------------------------------------------------------
 
-newtype PkgV = PkgV C.Version deriving (Eq,Ord,NFData,C.Text)
+newtype PkgV = PkgV C.Version deriving (Eq,Ord,NFData,C.Pretty)
+
+instance C.Parsec PkgV where
+  parsec = PkgV <$> C.parsec
 
 instance TPretty PkgV where
-  disp = display
+  disp = C.prettyShow
 
 instance DB.ToField PkgV where
   toField = DB.toField . tdisp

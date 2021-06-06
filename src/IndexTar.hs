@@ -7,6 +7,7 @@
 --
 module IndexTar where
 
+import qualified Cabal.Config            as C
 import qualified Codec.Archive.Tar       as Tar
 import qualified Codec.Archive.Tar.Index as Tar
 import qualified Codec.Compression.GZip  as GZip
@@ -15,20 +16,41 @@ import qualified Data.Aeson.Types        as J
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BSL
 import qualified Data.ByteString.Short   as BSS
+import           Data.Functor.Identity   as I
+import qualified Data.Map.Strict         as M
 import qualified Data.HashMap.Strict     as HM
 import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as T
 import           System.Path.IO
 
-import           Cabal.Config
 import           Types
 import           Utils
 
 type SrcTarName = BSS.ShortByteString -- with .tar.gz suffix
 
+data CabalConfig = CabalConfig
+    { ccRepos :: [(T.Text,(Bool,Path Absolute))] -- (label, (is-secure,fspath-to-index-tar))
+    } deriving (Show)
+
+readConfigFile :: IO CabalConfig
+readConfigFile = do
+    cfg <- C.readConfig
+
+    let repoCache = fromAbsoluteFilePath (I.runIdentity (C.cfgRemoteRepoCache cfg))
+
+    let repoSecure repo name
+          | name == "hackage.haskell.org" = True
+          | otherwise = C.repoSecure repo
+
+    return $ CabalConfig
+        [ (T.pack repoName, (repoSecure repo repoName, p))
+        | (repoName, repo) <- M.toList (C.cfgRepositories cfg)
+        , let p = repoCache </> fromUnrootedFilePath repoName
+        ]
+
 getIndexTarFn :: T.Text -> IO (Path Absolute)
 getIndexTarFn label = do
-    CabalConfig repos <- loadConfigFile =<< locateConfigFile
+    CabalConfig repos <- readConfigFile
 
     when (null repos) $ fail "no package indices found in cabal config"
 
